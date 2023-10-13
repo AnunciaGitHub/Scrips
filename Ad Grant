@@ -1,0 +1,373 @@
+var spreadSheetId = '1lQLfr-GcOhjJPNPkp_1PUy_7PKvQmjBjM_etZDbNWSM';
+var sheetName = 'Dashboard';
+var EMAILS = ['ada@anuncia.co.uk', 'andrew@anuncia.co.uk', 'oscar@anuncia.co.uk', 'zohyaah@anuncia.co.uk', 'joe@anuncia.co.uk'];
+var accounts;
+var startDate40 = new Date(new Date().getTime() - 40 * 24 * 60 * 60 * 1000);
+var endDate40 = new Date(new Date().getTime() - 20 * 24 * 60 * 60 * 1000);
+var startDate20 = new Date(new Date().getTime() - 20 * 24 * 60 * 60 * 1000);
+var endDate20 = new Date();
+
+
+function main() {
+  
+  accounts = AdsManagerApp.accounts()
+    .withCondition('LabelNames CONTAINS "Anuncia - Grants"') 
+    .get();
+  
+  
+  var data = [];
+
+  while(accounts.hasNext()) {
+
+    var account = accounts.next();
+    AdsManagerApp.select(account);
+
+//Pull Data
+    var name = account.getName();
+    var thisMonthData = account.getStatsFor("THIS_MONTH");
+    var last30DaysData = account.getStatsFor("LAST_30_DAYS");
+    var yesterdayData = account.getStatsFor("YESTERDAY");
+    var last7Days = account.getStatsFor("LAST_7_DAYS");
+    var stats40Days = account.getStatsFor(formatDate(startDate40), formatDate(endDate40));
+    var last20Days = account.getStatsFor(formatDate(startDate20), formatDate(endDate20));
+    var budget = getAccountBudget(name);
+
+
+//Iterators
+    var adsIterator = AdsApp.ads()
+    .withCondition("campaign.experiment_type = BASE")
+    .withCondition("Status != DISABLED")
+    .withCondition("campaign.status = ENABLED")
+    .withCondition("campaign.status != REMOVED")
+    .withCondition("ad_group.status = ENABLED")
+    .withCondition("ad_group.status != REMOVED")
+    .withCondition("ad_group_ad.status = ENABLED")
+    .withCondition("ad_group_ad.status != PAUSED")
+    .withCondition("ad_group_ad.status != REMOVED")
+    .withCondition("ad_group_ad.ad.type != UNKNOWN")
+    .get(); 
+    
+    var adGroupIterator = AdsApp.adGroups()
+    .withCondition("campaign.experiment_type = BASE")
+    .withCondition("campaign.status = ENABLED") 
+    .withCondition("ad_group.status = ENABLED")      
+    .withCondition("AdGroupType = SEARCH_STANDARD")
+    .get();
+    
+    var keywordIterator = AdsApp.keywords()
+    .withCondition("campaign.experiment_type = BASE")
+    .withCondition("campaign.status = ENABLED")
+    .withCondition("ad_group.status = ENABLED")
+    .withCondition("Status = ENABLED")
+    .get();
+    
+    var enabledCampaignIterators =  AdsApp.campaigns()
+    .withCondition("campaign.experiment_type = BASE")
+    .withCondition("campaign.status = ENABLED")
+    .get();
+
+    var accountQuery = "SELECT customer.optimization_score FROM customer";
+
+    
+//Push Data    
+    var cost = thisMonthData.getCost();
+    var yesterdayCost = yesterdayData.getCost();
+    var percentage = (cost / budget);
+    var disapprovedAdsCount = getDisapprovedAdsCount(adsIterator);
+    var impressionChange = getImpressionChange(account, enabledCampaignIterators);
+    var singleAdGroupsCount = getSingleAdGroupsCount(adGroupIterator);
+    var noKeywordAdGroups = getAdGroupsWithNoKeywords(adGroupIterator);
+    var lowQualityKeywords = getLowQualityScoreKeywords(account, keywordIterator);
+    var singleWordKeywords = getSingleWordKeywordsCount(keywordIterator); 
+    var ctr7Days = last7Days.getCtr();
+    var ctr20Days = last20Days.getCtr();
+    var ctr30Days = last30DaysData.getCtr();
+    var ctr40Days = stats40Days.getCtr();
+    var cpa7Days = last7Days.getCost() / last7Days.getConversions();
+    var cpc20Days = last20Days.getAverageCpc();
+    var cpa30Days = last30DaysData.getCost() / last30DaysData.getConversions();
+    var cpc40Days = stats40Days.getAverageCpc();
+    var increasedCompetition = checkIncreasedCompetiton(ctr20Days, ctr40Days, cpc20Days, cpc40Days);
+    var optiScore = optimisationScore(accountQuery); 
+    
+
+    
+  data.push([
+
+      name,
+      yesterdayCost,
+      cost,
+      budget,
+      percentage,
+      increasedCompetition,
+      disapprovedAdsCount,
+      impressionChange,
+      singleAdGroupsCount,
+      noKeywordAdGroups,
+      lowQualityKeywords,
+      singleWordKeywords,
+      ctr7Days,
+      ctr30Days,
+      cpa7Days,
+      cpa30Days,
+      optiScore
+
+      ]);
+} 
+  if (data.length > 0) {
+    writeToSheet(spreadSheetId, sheetName, data);
+    sendEmail(spreadSheetId);
+  }
+
+
+}
+
+function writeToSheet(id, name, data) {
+
+  const sheet = SpreadsheetApp.openById(id)
+      .getSheetByName(name);
+  sheet.getRange(2, 1, data.length, data[0].length)
+      .setValues(data);
+
+}
+
+function getAccountBudget(name) {
+
+  const sheet = SpreadsheetApp.openById(spreadSheetId)
+    .getSheetByName('Settings');
+  
+  const data = sheet.getDataRange().getValues();
+
+  for (let i = 0; i < data.length; i++) {
+    if (data[i][0] === name) {
+      return data[i][1]; 
+    }
+  }
+
+  return 'N/A';
+
+}
+
+function formatDate(date) {
+  return {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1, // JavaScript's getMonth() returns 0-11, but getStatsFor() expects 1-12
+    day: date.getDate()
+  };
+}
+
+
+function getDisapprovedAdsCount(adsIterator) {
+
+  var count = 0;
+  while (adsIterator.hasNext()) {
+    var ad = adsIterator.next();
+    if (ad.getPolicyApprovalStatus() === "DISAPPROVED") {
+      count++; 
+    }
+  }
+
+  return count;
+
+}
+
+function getImpressionChange(account, enabledCampaignIterators) {
+
+
+  var impressionChange = 0;
+  var campaignCount = 0;
+
+    while (enabledCampaignIterators.hasNext()) {
+
+      var campaign = enabledCampaignIterators.next();
+
+      campaignCount++;
+     
+    var startDate = new Date(new Date().getTime() - 60*24*60*60*1000);
+    var endDate = new Date(new Date().getTime() - 30*24*60*60*1000);
+    var stats60Days = campaign.getStatsFor(formatDate(startDate), formatDate(endDate));
+    var stats30Days = campaign.getStatsFor("LAST_30_DAYS");
+    var impression30Days = stats30Days.getImpressions();
+    var impression60Days = stats60Days.getImpressions();    
+      
+
+    if (impression60Days > 0) { // To avoid division by zero
+      var change = ((impression60Days - impression30Days) / impression60Days) * 100;
+
+      if (change >= 50) {
+        impressionChange += 1;
+      }
+    }
+         }
+  
+    Logger.log("Campaign count in account " + account.getName() + ": " + campaignCount);
+  return impressionChange;
+}
+
+function getSingleAdGroupsCount(adGroupIterator) {
+  var adGroupIds = [];
+  var adCountsByAdGroup = {};
+
+  while (adGroupIterator.hasNext()) {
+    var adGroup = adGroupIterator.next();
+    adGroupIds.push(adGroup.getId());
+    adCountsByAdGroup[adGroup.getId()] = 0; // Initialize count for each ad group
+  }
+
+  // If no ad group IDs are available, return zero
+  if (adGroupIds.length === 0) {
+    return 0;
+  }
+
+  // Fetch all enabled ads for the ad groups in a single request
+  var adCheckIterator = AdsApp.ads()
+    .withCondition("AdGroupId IN [" + adGroupIds.join(",") + "]")
+    .withCondition("campaign.status = ENABLED")  
+    .withCondition("ad_group.status = ENABLED")      
+    .withCondition("ad_group_ad.status = ENABLED")
+    .get();
+
+  while (adCheckIterator.hasNext()) {
+    var ad = adCheckIterator.next();
+    var adGroupId = ad.getAdGroup().getId();
+    adCountsByAdGroup[adGroupId]++; // Increment count for each enabled ad
+  }
+
+  var count = 0;
+
+  // Count ad groups with exactly one enabled ad
+  for (var adGroupId in adCountsByAdGroup) {
+    if (adCountsByAdGroup[adGroupId] < 2) {
+      count++;
+    }
+  }
+
+  return count;
+}
+
+
+function getAdGroupsWithNoKeywords(adGroupIterator) {
+  var adGroupIds = [];
+  var adGroupsById = {};
+
+  while (adGroupIterator.hasNext()) {
+    var adGroup = adGroupIterator.next();
+    adGroupIds.push(adGroup.getId());
+    adGroupsById[adGroup.getId()] = adGroup;
+  }
+
+  // If no ad group IDs are available, return zero
+  if (adGroupIds.length === 0) {
+    return 0;
+  }
+
+  // Fetch all keywords for the ad groups in a single request
+  var kwIterator = AdsApp.keywords()
+    .withCondition("AdGroupId IN [" + adGroupIds.join(",") + "]")
+    .get();
+
+  var adGroupsWithKeywords = {};
+
+  // Collect ad groups with keywords
+  while (kwIterator.hasNext()) {
+    var keyword = kwIterator.next();
+    adGroupsWithKeywords[keyword.getAdGroup().getId()] = true;
+  }
+
+  var count = 0;
+
+  // Count ad groups without keywords
+  for (var adGroupId in adGroupsById) {
+    if (!adGroupsWithKeywords[adGroupId]) {
+      count++;
+    }
+  }
+
+  return count;
+}
+
+function getLowQualityScoreKeywords(account, keywordIterator) {
+
+  // Get quality score threshold for account from SETTINGS sheet
+  var sheet = SpreadsheetApp.openById(spreadSheetId)
+    .getSheetByName('Settings');
+  var data = sheet.getDataRange().getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (data[i][0] === account.getName()) {
+      threshold = data[i][2]; 
+      break;
+    }
+  }
+
+  
+  var count = 0;
+
+  while (keywordIterator.hasNext()) {
+    var keyword = keywordIterator.next();
+    var qualityScore = keyword.getQualityScore();
+
+
+    // Check if number 1-10
+    if (!isNaN(qualityScore) && 
+        qualityScore >= 1 && 
+        qualityScore <= 10) {
+
+      if (qualityScore <= threshold) {
+        count++;
+      }
+    }
+  }
+
+  return count;
+
+}
+
+function getSingleWordKeywordsCount(keywordIterator) {
+  var count = 0;
+  
+  while (keywordIterator.hasNext()) {
+    var keyword = keywordIterator.next();
+    AdsApp.keywords(keyword)
+    
+    // Check if keyword text has only 1 word
+    if(keyword.getText().split(' ').length === 1) {
+      count++;
+    }
+  }
+  
+  return count;
+
+}
+
+function checkIncreasedCompetiton(ctr20Days, ctr40Days, cpc20Days, cpc40Days) {
+  
+  if (((ctr40Days / ctr20Days)-1) > 0.1 && (cpc40Days / cpc20Days)-1 < -0.1) {
+    return 'Increased Competition';
+  } else {
+    return '-';
+  }
+}
+
+function optimisationScore (accountQuery) {
+    var accountReport = AdsApp.report(accountQuery);
+    var accountRows = accountReport.rows();
+    while (accountRows.hasNext()) {
+      var row = accountRows.next();
+      var optimizationScore = (row["customer.optimization_score"] * 100).toFixed(2);
+      return optimizationScore;
+    }
+  }
+
+
+function sendEmail(id) {
+  const sheetUrl = SpreadsheetApp.openById(id).getUrl();
+  
+  MailApp.sendEmail({
+    to: EMAILS.join(','),
+    subject: 'Ad Grant Dashboard',
+    body: sheetUrl
+  });
+}
+
+
+
