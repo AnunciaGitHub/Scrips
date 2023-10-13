@@ -1,0 +1,80 @@
+var spreadSheetId = '1H4aFRPXA5aUqckoGjiAN3uvHSd81aVrMMvV0Z9zZoYw';
+var accounts;
+var EMAILS = ['ada@anuncia.co.uk', 'andrew@anuncia.co.uk', 'oscar@anuncia.co.uk', 'zohyaah@anuncia.co.uk', 'joe@anuncia.co.uk'];
+
+function main() {
+  var accounts = AdsManagerApp.accounts()
+    .withCondition('LabelNames CONTAINS "Alert Script"')
+    .get();
+
+  var data = [];
+
+  while (accounts.hasNext()) {
+    var account = accounts.next();
+    AdsManagerApp.select(account);
+
+    var query = "SELECT campaign.id, campaign_asset.status, campaign.status, campaign.experiment_type, campaign.name, asset.id, asset.type, asset.policy_summary.approval_status FROM campaign_asset WHERE asset.policy_summary.approval_status = 'DISAPPROVED' AND campaign.status = 'ENABLED' AND campaign.experiment_type = 'BASE' AND campaign_asset.status = 'ENABLED'";
+    var accountReport = AdsApp.report(query);
+
+    var accountRows = accountReport.rows();
+    while (accountRows.hasNext()) {
+      var row = accountRows.next();
+      
+      data.push([
+        account.getName(),
+        row['campaign.name'],
+        row['asset.id'],
+        row['asset.type'],
+        row['asset.policy_summary.approval_status']
+      ]);
+    }
+  }
+
+  var sheetName = Utilities.formatDate(new Date(), "GMT", "dd/MM/yy");
+  writeToSheet(spreadSheetId, sheetName, data);
+
+  // Send email if there is data
+  if (data.length > 0) {
+    sendEmail(spreadSheetId, data);
+  }
+}
+
+function writeToSheet(spreadsheetId, sheetName, data) {
+  var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+  var sheet = spreadsheet.getSheetByName(sheetName);
+  
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(sheetName);
+    Logger.log("Sheet '" + sheetName + "' created in the specified Google Sheet.");
+  }
+
+  sheet.clearContents();
+  if (data.length > 0) {
+    sheet.getRange(1, 1, 1, 5).setValues([['Account Name', 'Campaign Name', 'Asset ID', 'Asset Type', 'Approval Status']]);
+    sheet.getRange(2, 1, data.length, data[0].length).setValues(data);
+    Logger.log("Data written to the sheet '" + sheetName + "'.");
+  } else {
+    Logger.log("No data to write to the sheet.");
+  }
+}
+
+function sendEmail(id, data) {
+  const sheetUrl = SpreadsheetApp.openById(id).getUrl();
+  var emailBody = 'ALERT - Disapproved Asset Detected\n\n';
+
+  for (var i = 0; i < data.length; i++) {
+    emailBody += 'Account Name: ' + data[i][0] + '\n';
+    emailBody += 'Campaign Name: ' + data[i][1] + '\n';
+    emailBody += 'Item ID: ' + data[i][2] + '\n';
+    emailBody += 'Asset Type: ' + data[i][3] + '\n';
+    emailBody += 'Approval Status: ' + data[i][4] + '\n\n';
+  }
+  
+  MailApp.sendEmail({
+    to: EMAILS.join(','),
+    subject: 'ALERT - Disapproved Asset Detected',
+    body: emailBody + 'Spreadsheet URL: ' + sheetUrl
+  });
+}
+
+
