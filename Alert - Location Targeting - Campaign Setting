@@ -1,0 +1,75 @@
+var spreadSheetId = '1RSZ6mKja6ifSK9-A-CGoiDJcrnIrmkOmtqp4Y4UAtUA';
+var accounts;
+var EMAILS = ['ada@anuncia.co.uk', 'andrew@anuncia.co.uk', 'oscar@anuncia.co.uk', 'zohyaah@anuncia.co.uk', 'joe@anuncia.co.uk'];
+
+function main() {
+  var accounts = AdsManagerApp.accounts()
+    .withCondition('LabelNames CONTAINS "Alert Script"')
+    .get();
+
+  var data = [];
+
+  while (accounts.hasNext()) {
+    var account = accounts.next();
+    AdsManagerApp.select(account);
+
+    var query = "SELECT campaign.id, campaign.status, campaign.serving_status, campaign.experiment_type, campaign.name, campaign.geo_target_type_setting.positive_geo_target_type FROM campaign WHERE campaign.status = 'ENABLED' AND campaign.serving_status = 'SERVING' AND campaign.experiment_type = 'BASE' AND campaign.geo_target_type_setting.positive_geo_target_type = 'PRESENCE_OR_INTEREST'";
+    var accountReport = AdsApp.report(query);
+    
+    var accountRows = accountReport.rows();
+    while (accountRows.hasNext()) {
+      var row = accountRows.next();
+      
+      data.push([
+        account.getName(),
+        row['campaign.name'],
+        row['campaign.geo_target_type_setting.positive_geo_target_type']
+        
+      ]);
+    }
+  }
+
+  var sheetName = Utilities.formatDate(new Date(), "GMT", "dd/MM/yy");
+  writeToSheet(spreadSheetId, sheetName, data);
+
+  // Send email if there is data
+  if (data.length > 0) {
+    sendEmail(spreadSheetId, data);
+  }
+}
+
+function writeToSheet(spreadsheetId, sheetName, data) {
+  var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+  var sheet = spreadsheet.getSheetByName(sheetName);
+  
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(sheetName);
+    Logger.log("Sheet '" + sheetName + "' created in the specified Google Sheet.");
+  }
+
+  sheet.clearContents();
+  if (data.length > 0) {
+    sheet.getRange(1, 1, 1, 3).setValues([['Account Name', 'Campaign Name', 'Location Targeting']]);
+    sheet.getRange(2, 1, data.length, data[0].length).setValues(data);
+    Logger.log("Data written to the sheet '" + sheetName + "'.");
+  } else {
+    Logger.log("No data to write to the sheet.");
+  }
+}
+
+function sendEmail(id, data) {
+  const sheetUrl = SpreadsheetApp.openById(id).getUrl();
+  var emailBody = 'ALERT - Campaign Setting Location Targeting Presence and Interest\n\n';
+
+  for (var i = 0; i < data.length; i++) {
+    emailBody += 'Account Name: ' + data[i][0] + '\n';
+    emailBody += 'Campaign Name: ' + data[i][1] + '\n';
+    emailBody += 'Location Targeting: ' + data[i][2] + '\n\n';
+  }
+  
+  MailApp.sendEmail({
+    to: EMAILS.join(','),
+    subject: 'ALERT - Campaign Setting Location Targeting Presence and Interest',
+    body: emailBody + 'Spreadsheet URL: ' + sheetUrl
+  });
+}
