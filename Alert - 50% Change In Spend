@@ -1,0 +1,94 @@
+var spreadSheetId = '1XST3tbAXETXOBfsxrWxQOKkiaa4rHQ9m_BZGra8L50o';
+var EMAILS = 'joe@anuncia.co.uk';
+var accounts;
+
+
+function main() {
+  accounts = AdsManagerApp.accounts()
+        .withCondition('LabelNames CONTAINS "Alert Script"') 
+        .get();
+  var data = [];
+
+  while (accounts.hasNext()) {
+    var account = accounts.next();
+    AdsManagerApp.select(account);
+
+    var accountName = account.getName();
+    
+    Logger.log('Account Name: ' + accountName);
+
+    var previous24 = account.getStatsFor('YESTERDAY');
+    var current24 = account.getStatsFor('TODAY');
+
+    var previousCost = previous24.getCost();
+    var currentCost = current24.getCost();
+
+    var costChange = checkCostChange(previousCost, currentCost, previous24, current24);
+
+    if (costChange !== '-') {
+      data.push([accountName, previousCost, currentCost, costChange]);
+      
+      Logger.log('Previous Cost: ' + previousCost);
+      Logger.log('Current Cost: ' + currentCost);
+      Logger.log('Cost Change: ' + costChange);
+    }
+  }
+
+  if (data.length > 0) {
+    var sheetName = createSheetWithDate();
+    writeToSheet(spreadSheetId, sheetName, data);
+    sendEmail(spreadSheetId, data);
+  }
+}
+
+function createSheetWithDate() {
+  var today = new Date();
+  var sheetName = Utilities.formatDate(today, "GMT", "dd-MM-yyyy");
+  var spreadsheet = SpreadsheetApp.openById(spreadSheetId);
+  spreadsheet.insertSheet(sheetName);
+  return sheetName;
+}
+
+function writeToSheet(id, name, data) {
+  const sheet = SpreadsheetApp.openById(id).getSheetByName(name);
+  sheet.getRange(1, 1, 1, 4).setValues([['Account Name', 'Previous Cost', 'Current Cost', 'Cost Change']]);
+  sheet.getRange(2, 1, data.length, data[0].length).setValues(data);
+}
+
+function formatDate(date) {
+  return {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1, 
+    day: date.getDate()
+  };
+}
+
+function checkCostChange(previousCost, currentCost, previous24, current24) {
+  var percentageChange = ((currentCost - previousCost) / previousCost) * 100;
+  
+  if (percentageChange > 50) {
+    return ' And Today Spend Increased ' + percentageChange.toFixed(2) + '%';
+  } else if (percentageChange < -50) {
+    return ' And Today Spend Decreased ' + percentageChange.toFixed(2) + '%';
+  } else {
+    return '-';
+  }
+}
+
+function sendEmail(id, data) {
+  const sheetUrl = SpreadsheetApp.openById(id).getUrl();
+  var emailBody = 'ALERT - 50% Change In Spend Detected\n\n';
+
+  for (var i = 0; i < data.length; i++) {
+    emailBody += 'Account Name: ' + data[i][0] + '\n';
+    emailBody += 'Previous Cost: ' + data[i][1] + '\n';
+    emailBody += 'Current Cost: ' + data[i][2] + '\n';
+    emailBody += 'Change: ' + data[i][3] + '\n\n';
+  }
+  
+  MailApp.sendEmail({
+    to: EMAILS,
+    subject: 'ALERT 50% Change In Spend Detected',
+    body: emailBody + 'Spreadsheet URL: ' + sheetUrl
+  });
+}
