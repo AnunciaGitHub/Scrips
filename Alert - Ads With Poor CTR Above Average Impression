@@ -1,0 +1,108 @@
+var spreadSheetId = 'SHEET_ID_HERE';
+var sheetName = "Alert - Ads With Poor CTR Above Average Impression";
+var EMAILS = 'EMAIL_HERE';
+
+function main() {
+    var query1 = "SELECT metrics.impressions FROM ad_group_ad WHERE segments.date DURING LAST_MONTH AND ad_group_ad.status = 'ENABLED' AND ad_group.status = 'ENABLED' AND campaign.status = 'ENABLED' AND campaign.experiment_type = 'BASE' AND metrics.impressions IS NOT NULL";
+    
+    var accountReport1 = AdsApp.report(query1);
+    var accountRows1 = accountReport1.rows();
+    
+    var totalImpressions = 0;
+    var numberOfAds = 0;
+    
+    while (accountRows1.hasNext()) {
+        var row = accountRows1.next();
+        var impressions = parseInt(row['metrics.impressions']);
+        if (impressions > 0) {
+            totalImpressions += impressions;
+            numberOfAds++;
+        }
+    }
+    
+    var averageImpressions = (numberOfAds > 0) ? totalImpressions / numberOfAds : 0;
+    averageImpressions = Math.ceil(averageImpressions); // Round up to the nearest whole number
+  
+    // Log the results
+    Logger.log("Number of ads with impressions: " + numberOfAds);
+    Logger.log("Total impressions for these ads: " + totalImpressions);
+    Logger.log("Average impressions per ad: " + averageImpressions);
+
+    // Get CTR value from the Settings sheet
+    var ctrValue = getCTRFromSettings();
+
+    var query2 = "SELECT campaign.status, ad_group_ad.status, ad_group.status, ad_group_ad.ad.id, ad_group_ad.ad.type, campaign.name, ad_group.name, campaign.experiment_type, metrics.ctr, metrics.impressions FROM ad_group_ad WHERE segments.date DURING LAST_MONTH AND ad_group_ad.status = 'ENABLED' AND ad_group.status = 'ENABLED' AND campaign.status = 'ENABLED' AND campaign.experiment_type = 'BASE' AND metrics.ctr < " + ctrValue + " AND metrics.impressions >= " + averageImpressions;
+ 
+    var accountReport2 = AdsApp.report(query2);
+    var accountRows2 = accountReport2.rows();
+    var data = [];
+    
+    while (accountRows2.hasNext()) {
+        var row = accountRows2.next();
+        data.push([
+            AdsApp.currentAccount().getName(),
+            row['campaign.name'],
+            row['ad_group.name'],
+            row['ad_group_ad.ad.id'],
+            row['metrics.ctr'],
+            row['metrics.impressions']
+        ]);
+    }
+    
+    writeToSheet(spreadSheetId, sheetName, data);
+
+    // Send email if there is data
+    if (data.length > 0) {
+        sendEmail(spreadSheetId, data);
+    }
+}
+
+function getCTRFromSettings() {
+    var spreadsheet = SpreadsheetApp.openById(spreadSheetId);
+    var settingsSheet = spreadsheet.getSheetByName("Settings");
+    var ctrValue = settingsSheet.getRange(2, 1).getValue(); // This gets the value from the first column and second row
+    return ctrValue;
+}
+
+function writeToSheet(spreadsheetId, sheetName, data) {
+    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    var sheet = spreadsheet.getSheetByName(sheetName);
+  
+    if (!sheet) {
+        // Create the sheet if it doesn't exist
+        sheet = spreadsheet.insertSheet(sheetName);
+        Logger.log("Sheet '" + sheetName + "' created in the specified Google Sheet.");
+    }
+
+    sheet.clearContents();
+
+    // Write the current date to the first row in the format "dd/MM/yyyy"
+    var currentDate = Utilities.formatDate(new Date(), "GMT", "dd/MM/yyyy");
+    sheet.getRange(1, 1).setValue("Script Run Date: " + currentDate);
+
+    if (data.length > 0) {
+        sheet.getRange(2, 1, 1, 4).setValues([['Account Name', 'Campaign Name', 'Ad Group Name', 'Ad ID']]);
+        sheet.getRange(3, 1, data.length, data[0].length).setValues(data);
+        Logger.log("Data written to the sheet '" + sheetName + "'.");
+    } else {
+        Logger.log("No data to write to the sheet.");
+    }
+}
+
+function sendEmail(id, data) {
+    const sheetUrl = SpreadsheetApp.openById(id).getUrl();
+    var emailBody = 'Alert - Ads With Poor CTR Above Average Impression\n\n';
+
+    for (var i = 0; i < data.length; i++) {
+        emailBody += 'Account Name: ' + data[i][0] + '\n';
+        emailBody += 'Campaign Name: ' + data[i][1] + '\n';
+        emailBody += 'Ad Group Name: ' + data[i][2] + '\n';
+        emailBody += 'Ad ID: ' + data[i][3] + '\n\n';
+    }
+  
+    MailApp.sendEmail({
+        to: EMAILS,
+        subject: 'Alert - Ads With Poor CTR Above Average Impression',
+        body: emailBody + 'Spreadsheet URL: ' + sheetUrl
+    });
+}
